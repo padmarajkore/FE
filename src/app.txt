@@ -60,7 +60,7 @@ import {
   PauseCircle,
 } from "lucide-react";
 
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
+const API_BASE = "http://localhost:8000";
 
 // Enhanced In-memory DB with analytics
 const InMemoryDB = {
@@ -473,21 +473,7 @@ function App() {
         }
       }
     } catch (error) {
-      console.error("API Error:", error);
-      
-      let errorMessage = "An error occurred while connecting to the server.";
-      
-      if (error.message.includes("CORS") || error.message.includes("blocked")) {
-        errorMessage = "CORS Error: Backend server needs CORS configuration. Please check server settings.";
-      } else if (error.message.includes("Failed to fetch") || error.name === "TypeError") {
-        errorMessage = `Network Error: Cannot connect to ${API_BASE}. Is the server running?`;
-      } else if (error.message.includes("500")) {
-        errorMessage = "Server Error: Backend encountered an internal error.";
-      } else if (error.message.includes("404")) {
-        errorMessage = "API Endpoint Not Found: Check if /run_sse endpoint exists.";
-      }
-      
-      setResponse(`Error: ${errorMessage}\n\nDetails: ${error.message}`);
+      setResponse(`Error: ${error.message}`);
     } finally {
       setLoading(false);
     }
