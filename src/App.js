@@ -58,6 +58,11 @@ import {
   AlertCircle,
   PlayCircle,
   PauseCircle,
+  Folder,
+  FolderOpen,
+  Archive,
+  Layers,
+  Monitor,
 } from "lucide-react";
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
@@ -81,23 +86,33 @@ const InMemoryDB = {
     totalStudents: 0,
     evaluationsCompleted: 0,
   },
-  
+
   saveContent(content) {
     const id = Date.now().toString();
-    const contentWithId = { 
-      ...content, 
-      id, 
+    const contentWithId = {
+      ...content,
+      id,
       createdAt: new Date().toISOString(),
       views: 0,
       likes: 0,
       rating: 0,
       tags: content.tags || [],
+      shared: false,
+      sharedAt: null,
+      // Enhanced metadata for visualizations
+      metadata: {
+        ...content.metadata,
+        fileSize: content.htmlContent ? new Blob([content.htmlContent]).size : 0,
+        hasInteractivity: content.htmlContent ? content.htmlContent.includes('addEventListener') : false,
+        uses3D: content.htmlContent ? content.htmlContent.includes('three.js') || content.htmlContent.includes('THREE') : false,
+        usesCharts: content.htmlContent ? content.htmlContent.includes('chart') || content.htmlContent.includes('Chart') : false,
+      }
     };
     this.content.push(contentWithId);
     this.analytics.contentCreated++;
     return contentWithId;
   },
-  
+
   addStudent(student) {
     const existingStudent = this.students.find(s => s.name.toLowerCase() === student.name.toLowerCase());
     if (!existingStudent) {
@@ -112,14 +127,27 @@ const InMemoryDB = {
     }
     return existingStudent;
   },
-  
+
+  getContent(userId, type = null) {
+    return this.content.filter(item =>
+      item.userId === userId && (type ? item.type === type : true)
+    );
+  },
+
+  getVisualizationsByTeacher(userId) {
+    return this.content.filter(item =>
+      item.userId === userId && item.type === 'visualization'
+    ).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  },
+
   saveEvaluationSession(session) {
     this.evaluationSessions.push(session);
     if (session.status === 'completed') {
       this.analytics.evaluationsCompleted++;
     }
   },
-  
+
+
   saveStudentProfile(profile) {
     const existingIndex = this.studentProfiles.findIndex(p => p.student_name === profile.student_name);
     if (existingIndex >= 0) {
@@ -128,13 +156,13 @@ const InMemoryDB = {
       this.studentProfiles.push(profile);
     }
   },
-  
+
   getContent(userId, type = null) {
     return this.content.filter(item =>
       item.userId === userId && (type ? item.type === type : true)
     );
   },
-  
+
   shareContent(contentId) {
     const content = this.content.find(item => item.id === contentId);
     if (content && !content.shared) {
@@ -145,13 +173,13 @@ const InMemoryDB = {
     }
     return false;
   },
-  
+
   getSharedContent(type = null) {
     return this.sharedContent.filter(item =>
       type ? item.type === type : true
     );
   },
-  
+
   deleteContent(contentId, userId) {
     const idx = this.content.findIndex(item => item.id === contentId && item.userId === userId);
     if (idx > -1) {
@@ -160,7 +188,7 @@ const InMemoryDB = {
     }
     return false;
   },
-  
+
   incrementView(contentId) {
     const content = this.content.find(item => item.id === contentId);
     if (content) {
@@ -181,15 +209,15 @@ const Card = ({ children, className = "", hover = true, padding = "p-6" }) => (
   </div>
 );
 
-const Button = ({ 
-  children, 
-  onClick, 
-  variant = "primary", 
-  size = "md", 
-  disabled = false, 
+const Button = ({
+  children,
+  onClick,
+  variant = "primary",
+  size = "md",
+  disabled = false,
   icon: Icon,
   className = "",
-  loading = false 
+  loading = false
 }) => {
   const variants = {
     primary: "bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl",
@@ -201,14 +229,14 @@ const Button = ({
     purple: "bg-gradient-to-r from-purple-600 to-purple-700 text-white hover:from-purple-700 hover:to-purple-800",
     orange: "bg-gradient-to-r from-orange-600 to-orange-700 text-white hover:from-orange-700 hover:to-orange-800"
   };
-  
+
   const sizes = {
     sm: "px-3 py-1.5 text-sm",
     md: "px-4 py-2.5 text-sm",
     lg: "px-6 py-3 text-base",
     xl: "px-8 py-4 text-lg"
   };
-  
+
   return (
     <button
       onClick={onClick}
@@ -242,12 +270,12 @@ const Badge = ({ children, variant = "default", size = "sm" }) => {
     red: "bg-red-100 text-red-800",
     orange: "bg-orange-100 text-orange-800"
   };
-  
+
   const sizes = {
     sm: "px-2 py-0.5 text-xs",
     md: "px-3 py-1 text-sm"
   };
-  
+
   return (
     <span className={`${variants[variant]} ${sizes[size]} rounded-full font-medium`}>
       {children}
@@ -274,7 +302,7 @@ const StatsCard = ({ title, value, change, icon: Icon, color = "blue" }) => {
     yellow: "text-yellow-600 bg-yellow-50",
     orange: "text-orange-600 bg-orange-50"
   };
-  
+
   return (
     <Card className="relative overflow-hidden">
       <div className="flex items-center justify-between">
@@ -305,6 +333,16 @@ function App() {
   const [sidebarView, setSidebarView] = useState("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  // MCQ specific states
+  const [mcqData, setMcqData] = useState(null);
+  const [selectedAnswers, setSelectedAnswers] = useState({});
+  const [showResults, setShowResults] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // 1. Add these new state variables at the top with your other useState declarations (around line 85)
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [useLocalModel, setUseLocalModel] = useState(false);
+
 
   // Content/task states
   const [taskInput, setTaskInput] = useState("");
@@ -372,6 +410,89 @@ function App() {
     setStudentProfiles(InMemoryDB.studentProfiles);
   }, [userId, sessionId]);
 
+  // 2. Add this useEffect hook after your existing useEffects (around line 120)
+  useEffect(() => {
+    // Network status listeners
+    const handleOnline = () => {
+      setIsOnline(true);
+      setNotifications(prev => [...prev, {
+        id: Date.now(),
+        message: "Connection restored - Using cloud AI",
+        time: "Just now",
+        unread: true
+      }]);
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      setNotifications(prev => [...prev, {
+        id: Date.now(),
+        message: "Offline mode - Switching to local AI",
+        time: "Just now",
+        unread: true
+      }]);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Replace your existing sendToLocalModel function with this fixed version
+async function sendToLocalModel(message) {
+  try {
+    // Ensure message is a string and not empty
+    if (!message || typeof message !== 'string') {
+      throw new Error('Invalid message format');
+    }
+
+    const requestBody = {
+      model: "gemma3", // Use the correct model name format for Ollama
+      prompt: message.trim(),
+      stream: false // Set to false to get complete response
+    };
+
+    // Debug log to check the request body
+    console.log('Local model request:', JSON.stringify(requestBody, null, 2));
+
+    const response = await fetch('http://localhost:11434/api/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    // Debug log for response status
+    console.log('Local model response status:', response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Local model error response:', errorText);
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+    console.log('Local model response data:', data);
+
+    // Ollama returns response in data.response field
+    if (data && data.response) {
+      return data.response.trim() || "Sorry, I couldn't generate a response.";
+    } else {
+      throw new Error('Invalid response format from local model');
+    }
+  } catch (error) {
+    console.error("Local model error:", error);
+    throw new Error(`Local model unavailable: ${error.message}`);
+  }
+}
+
   async function createSession() {
     const newSessionId = generateSessionId();
     try {
@@ -399,6 +520,7 @@ function App() {
     setResponse("");
     setHtmlContent("");
     setRaw(null);
+    setMcqData(null); // Reset MCQ data
 
     if (!sessionId) {
       setLoading(false);
@@ -424,7 +546,7 @@ function App() {
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       }
-      
+
       const data = await res.json();
       setRaw(data);
 
@@ -449,7 +571,29 @@ function App() {
       setResponse(text || "No response received.");
       setHtmlContent(html);
       setTaskInput("");
-      
+
+      // Handle MCQ response parsing
+      if (contentType === "mcq" && data && Array.isArray(data)) {
+        // Look for function response containing MCQ data
+        const mcqResponse = data.find(event =>
+          event.content?.parts?.some(part =>
+            part.functionResponse?.response?.questions
+          )
+        );
+
+        if (mcqResponse) {
+          const mcqQuestions = mcqResponse.content.parts.find(part =>
+            part.functionResponse?.response?.questions
+          )?.functionResponse?.response;
+
+          if (mcqQuestions) {
+            setMcqData(mcqQuestions);
+            setSelectedAnswers({});
+            setShowResults(false);
+          }
+        }
+      }
+
       // Handle specific agent responses
       if (contentType === "attendance" && text.includes("attendance saved")) {
         // Refresh students list
@@ -474,9 +618,9 @@ function App() {
       }
     } catch (error) {
       console.error("API Error:", error);
-      
+
       let errorMessage = "An error occurred while connecting to the server.";
-      
+
       if (error.message.includes("CORS") || error.message.includes("blocked")) {
         errorMessage = "CORS Error: Backend server needs CORS configuration. Please check server settings.";
       } else if (error.message.includes("Failed to fetch") || error.name === "TypeError") {
@@ -486,11 +630,100 @@ function App() {
       } else if (error.message.includes("404")) {
         errorMessage = "API Endpoint Not Found: Check if /run_sse endpoint exists.";
       }
-      
+
       setResponse(`Error: ${errorMessage}\n\nDetails: ${error.message}`);
     } finally {
       setLoading(false);
     }
+  }
+
+  // Fullscreen helper functions
+  function enterFullscreen(element) {
+    if (element.requestFullscreen) {
+      element.requestFullscreen();
+    } else if (element.webkitRequestFullscreen) {
+      element.webkitRequestFullscreen();
+    } else if (element.mozRequestFullScreen) {
+      element.mozRequestFullScreen();
+    } else if (element.msRequestFullscreen) {
+      element.msRequestFullscreen();
+    }
+  }
+
+  function exitFullscreen() {
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    } else if (document.mozCancelFullScreen) {
+      document.mozCancelFullScreen();
+    } else if (document.msExitFullscreen) {
+      document.msExitFullscreen();
+    }
+  }
+
+  function toggleFullscreen() {
+    const iframe = document.getElementById('visualization-iframe');
+    if (!document.fullscreenElement) {
+      setIsFullscreen(true);
+      enterFullscreen(iframe);
+    } else {
+      setIsFullscreen(false);
+      exitFullscreen();
+    }
+  }
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    function handleFullscreenChange() {
+      setIsFullscreen(!!document.fullscreenElement);
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, []);
+
+  // MCQ helper functions
+  function handleAnswerSelection(questionId, selectedOption) {
+    setSelectedAnswers(prev => ({
+      ...prev,
+      [questionId]: selectedOption
+    }));
+  }
+
+  function submitMCQAnswers() {
+    setShowResults(true);
+
+    // Calculate score
+    let correct = 0;
+    mcqData.questions.forEach(q => {
+      if (selectedAnswers[q.id] === q.correct_answer) {
+        correct++;
+      }
+    });
+
+    const score = (correct / mcqData.questions.length) * 100;
+
+    setNotifications(prev => [...prev, {
+      id: Date.now(),
+      message: `MCQ completed! Score: ${score.toFixed(1)}% (${correct}/${mcqData.questions.length})`,
+      time: "Just now",
+      unread: true
+    }]);
+  }
+
+  function resetMCQ() {
+    setSelectedAnswers({});
+    setShowResults(false);
   }
 
   // Agent-specific functions
@@ -499,7 +732,7 @@ function App() {
       alert("Please fill in all attendance fields.");
       return;
     }
-    
+
     const prompt = `Save attendance for student: ${selectedStudent}, Date: ${attendanceDate}, Status: ${attendanceStatus}, Subject: ${attendanceSubject}`;
     await sendToADK(prompt, "attendance");
   }
@@ -509,7 +742,7 @@ function App() {
       alert("Please enter a student name for evaluation.");
       return;
     }
-    
+
     const prompt = `Start comprehensive student evaluation for: ${evaluationStudent}`;
     await sendToADK(prompt, "evaluation");
   }
@@ -519,7 +752,7 @@ function App() {
       alert("Please provide an answer.");
       return;
     }
-    
+
     const prompt = `Record evaluation answer for session ${currentEvaluation.session_id}: ${evaluationAnswer}`;
     await sendToADK(prompt, "evaluation");
     setEvaluationAnswer("");
@@ -530,7 +763,7 @@ function App() {
       alert("Please fill in student name and subject.");
       return;
     }
-    
+
     const prompt = `Create personalized learning path for student: ${learningPathStudent}, Subject: ${learningPathSubject}, Duration: ${learningPathDuration || '4 weeks'}`;
     await sendToADK(prompt, "learning_path");
   }
@@ -540,7 +773,7 @@ function App() {
       alert("Please select a student for progress analysis.");
       return;
     }
-    
+
     const prompt = `Analyze comprehensive progress for student: ${progressStudent}`;
     await sendToADK(prompt, "progress");
   }
@@ -550,21 +783,21 @@ function App() {
       alert("Please enter a topic to search for resources.");
       return;
     }
-    
+
     const prompt = `Find educational resources for topic: ${resourceTopic}, Grade level: ${resourceGrade || 'any'}`;
     await sendToADK(prompt, "resources");
   }
 
   function saveContent(type) {
-    const title = taskInput.trim() 
+    const title = taskInput.trim()
       ? taskInput.substring(0, 50) + (taskInput.length > 50 ? "..." : "")
-      : `[Auto] ${type} content`;
-      
+      : `[Auto] ${type} content - ${new Date().toLocaleDateString()}`;
+
     if (!response && !htmlContent) {
       alert("No content to save.");
       return;
     }
-    
+
     const saved = InMemoryDB.saveContent({
       type,
       title,
@@ -573,25 +806,113 @@ function App() {
       htmlContent,
       userId,
       shared: false,
-      tags: [type, mode]
+      tags: [type, mode],
+      metadata: {
+        createdDate: new Date().toISOString(),
+        contentType: htmlContent ? 'interactive' : 'text',
+        hasHtml: !!htmlContent,
+        wordCount: response ? response.split(' ').length : 0,
+        // Add visualization-specific metadata
+        ...(type === 'visualization' && {
+          hasInteractivity: htmlContent ? htmlContent.includes('addEventListener') || htmlContent.includes('onclick') : false,
+          uses3D: htmlContent ? htmlContent.includes('three.js') || htmlContent.includes('THREE') : false,
+          usesCharts: htmlContent ? htmlContent.includes('chart') || htmlContent.includes('Chart') : false,
+        })
+      }
     });
-    
+
     setSavedContent(InMemoryDB.getContent(userId));
     setNotifications(prev => [...prev, {
       id: Date.now(),
-      message: `${type.toUpperCase()} content saved successfully`,
+      message: `${type.charAt(0).toUpperCase() + type.slice(1)} content saved successfully!`,
       time: "Just now",
       unread: true
     }]);
+
+    // Clear the form after saving
+    setTaskInput("");
+
+    // Show success message for visualizations
+    if (type === 'visualization') {
+      alert(`✅ Visualization "${title}" saved successfully!\n\nYou can now share it with students from your dashboard.`);
+    }
+
+    return saved;
   }
 
+  function unshareContent(contentId) {
+    const content = this.content.find(item => item.id === contentId);
+    if (content && content.shared) {
+      content.shared = false;
+      content.sharedAt = null;
+
+      // Remove from shared content array
+      this.sharedContent = this.sharedContent.filter(item => item.id !== contentId);
+      return true;
+    }
+    return false;
+  }
+
+  // 2. Enhanced shareContent function (replace the existing one)
   function shareContent(contentId) {
+    const content = InMemoryDB.content.find(item => item.id === contentId);
+    if (!content) {
+      alert("Content not found.");
+      return;
+    }
+
+    if (content.shared) {
+      alert("Content is already shared with students.");
+      return;
+    }
+
     if (InMemoryDB.shareContent(contentId)) {
       setSavedContent(InMemoryDB.getContent(userId));
       setSharedContent(InMemoryDB.getSharedContent());
+
       setNotifications(prev => [...prev, {
         id: Date.now(),
-        message: "Content shared with students",
+        message: `"${content.title}" has been shared with all students!`,
+        time: "Just now",
+        unread: true
+      }]);
+
+      // Show success modal or toast
+      alert(`✅ "${content.title}" has been successfully shared with students!\n\nStudents can now access this ${content.type} in their dashboard.`);
+    } else {
+      alert("Failed to share content. Please try again.");
+    }
+  }
+
+  // 3. Add bulk share functionality
+  function shareAllVisualizations() {
+    const unsharedVisualizations = savedContent.filter(content =>
+      content.type === 'visualization' && !content.shared
+    );
+
+    if (unsharedVisualizations.length === 0) {
+      alert("No unshared visualizations found.");
+      return;
+    }
+
+    const confirmShare = window.confirm(
+      `Share ${unsharedVisualizations.length} visualization(s) with students?`
+    );
+
+    if (confirmShare) {
+      let sharedCount = 0;
+      unsharedVisualizations.forEach(content => {
+        if (InMemoryDB.shareContent(content.id)) {
+          sharedCount++;
+        }
+      });
+
+      setSavedContent(InMemoryDB.getContent(userId));
+      setSharedContent(InMemoryDB.getSharedContent());
+
+      setNotifications(prev => [...prev, {
+        id: Date.now(),
+        message: `${sharedCount} visualization(s) shared with students!`,
         time: "Just now",
         unread: true
       }]);
@@ -604,23 +925,97 @@ function App() {
     }
   }
 
-  async function sendChatMessage() {
-    if (!chatInput.trim() && !selectedImage) return;
-    
-    const userMsg = {
-      id: Date.now(),
-      text: chatInput,
-      image: selectedImage,
-      sender: "user",
-      timestamp: new Date().toLocaleTimeString()
-    };
-    
-    setChat(prev => [...prev, userMsg]);
-    setIsTyping(true);
+  // Enhanced sendChatMessage function with better error handling
+async function sendChatMessage() {
+  if (!chatInput.trim() && !selectedImage) return;
 
-    const prompt = `Chat message: ${chatInput}${selectedImage ? " [Image attached]" : ""}`;
-    
-    try {
+  const messageText = chatInput.trim();
+  if (!messageText) {
+    console.error("Empty message, cannot send to local model");
+    return;
+  }
+
+  const userMsg = {
+    id: Date.now(),
+    text: messageText,
+    image: selectedImage,
+    sender: "user",
+    timestamp: new Date().toLocaleTimeString()
+  };
+
+  setChat(prev => [...prev, userMsg]);
+  setIsTyping(true);
+
+  let responseText = "I'm here to help! How can I assist you today?";
+  let modelUsed = "cloud";
+
+  try {
+    // Check if we should use local model (offline or manual override)
+    const shouldUseLocal = !isOnline || useLocalModel;
+
+    if (shouldUseLocal) {
+      // Try local model first
+      try {
+        console.log('Attempting local model with message:', messageText);
+        responseText = await sendToLocalModel(messageText);
+        modelUsed = "local";
+        console.log('Local model response received:', responseText);
+      } catch (localError) {
+        console.error("Local model failed:", localError);
+
+        // If local fails and we're online, fallback to cloud
+        if (isOnline) {
+          console.log("Falling back to cloud model...");
+          try {
+            const prompt = `Chat message: ${messageText}${selectedImage ? " [Image attached]" : ""}`;
+
+            const res = await fetch(`${API_BASE}/run`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                app_name: appName,
+                user_id: userId,
+                session_id: sessionId,
+                new_message: {
+                  role: "user",
+                  parts: [{ text: prompt }],
+                },
+              }),
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              if (Array.isArray(data) && data.length > 0) {
+                const modelResponses = data.filter(event =>
+                  event.content?.role === "model" &&
+                  event.content?.parts?.some(part => part.text)
+                );
+                if (modelResponses.length > 0) {
+                  const lastResponse = modelResponses[modelResponses.length - 1];
+                  const textParts = lastResponse.content.parts.filter(part => part.text);
+                  if (textParts.length > 0) {
+                    responseText = textParts.map(part => part.text).join('');
+                    modelUsed = "cloud (fallback)";
+                  }
+                }
+              }
+            } else {
+              throw new Error(`Cloud API responded with status ${res.status}`);
+            }
+          } catch (cloudError) {
+            console.error("Cloud fallback also failed:", cloudError);
+            responseText = `Both local and cloud AI models are unavailable. Local error: ${localError.message}. Cloud error: ${cloudError.message}`;
+            modelUsed = "error";
+          }
+        } else {
+          responseText = `Sorry, I'm currently offline and the local AI model encountered an error: ${localError.message}. Please check if the local model server is running on localhost:1234 and properly configured.`;
+          modelUsed = "error";
+        }
+      }
+    } else {
+      // Use cloud model (online and not forced local)
+      const prompt = `Chat message: ${messageText}${selectedImage ? " [Image attached]" : ""}`;
+
       const res = await fetch(`${API_BASE}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -635,7 +1030,6 @@ function App() {
         }),
       });
 
-      let responseText = "I'm here to help! How can I assist you today?";
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
@@ -648,34 +1042,53 @@ function App() {
             const textParts = lastResponse.content.parts.filter(part => part.text);
             if (textParts.length > 0) {
               responseText = textParts.map(part => part.text).join('');
+              modelUsed = "cloud";
             }
           }
         }
+      } else {
+        throw new Error("Cloud API request failed");
       }
+    }
 
-      setTimeout(() => {
-        setIsTyping(false);
-        setChat(prev => [...prev, { 
-          id: Date.now() + 1, 
-          text: responseText, 
-          sender: "bot", 
-          timestamp: new Date().toLocaleTimeString() 
-        }]);
-      }, 1000);
-      
-    } catch (error) {
-      setIsTyping(false);
-      setChat(prev => [...prev, { 
-        id: Date.now() + 2, 
-        text: "I apologize, but I'm having trouble connecting right now. Please try again.", 
-        sender: "bot", 
-        timestamp: new Date().toLocaleTimeString() 
+  } catch (error) {
+    console.error("Chat error:", error);
+    responseText = `I apologize, but I'm having trouble connecting right now. ${!isOnline ? 'You appear to be offline. ' : ''}Error details: ${error.message}`;
+    modelUsed = "error";
+  }
+
+  setTimeout(() => {
+    setIsTyping(false);
+    setChat(prev => [...prev, {
+      id: Date.now() + 1,
+      text: responseText,
+      sender: "bot",
+      timestamp: new Date().toLocaleTimeString(),
+      modelUsed // Add this to track which model was used
+    }]);
+
+    // Add notification about model used
+    if (modelUsed === "local") {
+      setNotifications(prev => [...prev, {
+        id: Date.now(),
+        message: "Response from local AI model",
+        time: "Just now",
+        unread: true
+      }]);
+    } else if (modelUsed === "error") {
+      setNotifications(prev => [...prev, {
+        id: Date.now(),
+        message: "AI models unavailable - check configuration",
+        time: "Just now",
+        unread: true
       }]);
     }
-    
-    setChatInput("");
-    setSelectedImage(null);
-  }
+  }, 1000);
+
+  setChatInput("");
+  setSelectedImage(null);
+}
+
 
   function handleImageUpload(event) {
     const file = event.target.files[0];
@@ -687,16 +1100,15 @@ function App() {
 
   const filteredContent = savedContent.filter(content => {
     const matchesSearch = content.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         content.prompt.toLowerCase().includes(searchQuery.toLowerCase());
+      content.prompt.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFilter = filterType === "all" || content.type === filterType;
     return matchesSearch && matchesFilter;
   });
 
-  // Enhanced Content Card Component
   function ContentCard({ content, showActions = true }) {
     const typeColors = {
       mcq: "blue",
-      visualization: "green", 
+      visualization: "green",
       game: "purple",
       attendance: "orange",
       evaluation: "red",
@@ -704,7 +1116,45 @@ function App() {
       progress: "yellow",
       resources: "blue"
     };
-    
+
+    // Enhanced share handler
+    const handleShare = () => {
+      if (content.shared) {
+        const confirmMessage = `Stop sharing "${content.title}" with students?`;
+        if (window.confirm(confirmMessage)) {
+          unshareContent(content.id);
+        }
+      } else {
+        const confirmMessage = content.htmlContent
+          ? `Share this interactive ${content.type} with students?\n\nStudents will be able to view and interact with the visualization.`
+          : `Share this ${content.type} with students?`;
+
+        if (window.confirm(confirmMessage)) {
+          shareContent(content.id);
+        }
+      }
+    };
+
+    // Preview handler for visualizations
+    const handlePreview = () => {
+      if (content.htmlContent) {
+        const newWindow = window.open();
+        newWindow.document.write(content.htmlContent);
+        newWindow.document.close();
+        InMemoryDB.incrementView(content.id);
+      }
+    };
+
+    // Get visualization features
+    const getVisualizationFeatures = () => {
+      if (content.type !== 'visualization') return [];
+      const features = [];
+      if (content.metadata?.hasInteractivity) features.push("Interactive");
+      if (content.metadata?.uses3D) features.push("3D");
+      if (content.metadata?.usesCharts) features.push("Charts");
+      return features;
+    };
+
     return (
       <Card className="group relative overflow-hidden" hover>
         <div className="absolute top-0 right-0 w-32 h-32 -mr-16 -mt-16 bg-gradient-to-br from-blue-50 to-transparent rounded-full opacity-50"></div>
@@ -721,6 +1171,16 @@ function App() {
                 {content.shared && <Badge variant="green">SHARED</Badge>}
               </div>
               <p className="text-gray-600 text-sm mb-3 line-clamp-2">{content.prompt}</p>
+
+              {/* Show visualization features */}
+              {content.type === 'visualization' && getVisualizationFeatures().length > 0 && (
+                <div className="flex items-center gap-2 mb-3">
+                  {getVisualizationFeatures().map(feature => (
+                    <Badge key={feature} variant="purple" size="sm">{feature}</Badge>
+                  ))}
+                </div>
+              )}
+
               <div className="flex items-center gap-4 text-xs text-gray-500">
                 <div className="flex items-center gap-1">
                   <Calendar size={12} />
@@ -737,36 +1197,78 @@ function App() {
               </div>
             </div>
           </div>
-          
+
+          {/* Enhanced preview for visualizations */}
           {content.htmlContent && (
-            <div className="mb-4 relative">
+            <div className="mb-4 relative group">
               <div className="relative overflow-hidden rounded-lg border border-gray-200">
                 <iframe
                   title={`Preview ${content.id}`}
                   srcDoc={content.htmlContent}
                   className="w-full h-48 bg-white"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent pointer-events-none"></div>
+                <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none"></div>
+
+                {/* Overlay buttons for interactive content */}
+                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center gap-3">
+                  <Button
+                    onClick={handlePreview}
+                    variant="primary"
+                    size="sm"
+                    icon={ExternalLink}
+                    className="bg-white/90 text-gray-900 hover:bg-white"
+                  >
+                    Full View
+                  </Button>
+                  {showActions && mode === "teacher" && (
+                    <Button
+                      onClick={handleShare}
+                      variant={content.shared ? "secondary" : "success"}
+                      size="sm"
+                      icon={content.shared ? CheckCircle : Share}
+                      className="bg-white/90 text-gray-900 hover:bg-white"
+                    >
+                      {content.shared ? "Shared" : "Share"}
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           )}
-          
+
           {showActions && mode === "teacher" && (
             <div className="flex items-center justify-between pt-4 border-t border-gray-100">
               <div className="flex gap-2">
                 <Button
-                  onClick={() => shareContent(content.id)}
-                  disabled={content.shared}
-                  variant={content.shared ? "secondary" : "outline"}
+                  onClick={handleShare}
+                  variant={content.shared ? "secondary" : "success"}
                   size="sm"
-                  icon={Share}
+                  icon={content.shared ? CheckCircle : Share}
                 >
-                  {content.shared ? "Shared" : "Share"}
+                  {content.shared ? "Shared with Students" : "Share with Students"}
                 </Button>
+
+                {content.htmlContent && (
+                  <Button
+                    onClick={handlePreview}
+                    variant="outline"
+                    size="sm"
+                    icon={ExternalLink}
+                  >
+                    Preview
+                  </Button>
+                )}
+
                 <Button
                   onClick={() => {
-                    navigator.clipboard.writeText(content.response || content.htmlContent);
-                    alert("Content copied to clipboard!");
+                    const textToCopy = content.htmlContent || content.response;
+                    navigator.clipboard.writeText(textToCopy);
+                    setNotifications(prev => [...prev, {
+                      id: Date.now(),
+                      message: "Content copied to clipboard!",
+                      time: "Just now",
+                      unread: true
+                    }]);
                   }}
                   variant="ghost"
                   size="sm"
@@ -784,7 +1286,11 @@ function App() {
                 </Tooltip>
                 <Tooltip content="Delete">
                   <Button
-                    onClick={() => deleteContent(content.id)}
+                    onClick={() => {
+                      if (window.confirm(`Delete "${content.title}"?`)) {
+                        deleteContent(content.id);
+                      }
+                    }}
                     variant="ghost"
                     size="sm"
                     icon={Trash2}
@@ -794,19 +1300,27 @@ function App() {
               </div>
             </div>
           )}
+
+          {/* Show shared info for students */}
+          {mode === "student" && content.sharedAt && (
+            <div className="mt-3 p-2 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex items-center gap-2 text-sm text-blue-700">
+                <Share size={14} />
+                <span>Shared by teacher on {new Date(content.sharedAt).toLocaleDateString()}</span>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
     );
   }
 
   return (
-    <div className={`min-h-screen transition-colors duration-200 ${
-      darkMode ? 'bg-gray-900 text-white' : 'bg-gradient-to-br from-blue-50 via-white to-purple-50'
-    }`}>
-      {/* Enhanced Header */}
-      <header className={`backdrop-blur-xl border-b sticky top-0 z-50 ${
-        darkMode ? 'bg-gray-900/80 border-gray-700' : 'bg-white/80 border-gray-200'
+    <div className={`min-h-screen transition-colors duration-200 ${darkMode ? 'bg-gray-900 text-white' : 'bg-gradient-to-br from-blue-50 via-white to-purple-50'
       }`}>
+      {/* Enhanced Header */}
+      <header className={`backdrop-blur-xl border-b sticky top-0 z-50 ${darkMode ? 'bg-gray-900/80 border-gray-700' : 'bg-white/80 border-gray-200'
+        }`}>
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-6">
@@ -821,7 +1335,7 @@ function App() {
                   <p className="text-xs text-gray-500">AI-Powered Educational Platform</p>
                 </div>
               </div>
-              
+
               <div className="hidden md:flex items-center gap-3">
                 <Button
                   onClick={() => {
@@ -903,9 +1417,8 @@ function App() {
 
       <div className="flex max-w-7xl mx-auto">
         {/* Enhanced Sidebar */}
-        <aside className={`${
-          sidebarCollapsed ? 'w-16' : 'w-80'
-        } transition-all duration-300 p-6 min-h-screen`}>
+        <aside className={`${sidebarCollapsed ? 'w-16' : 'w-80'
+          } transition-all duration-300 p-6 min-h-screen`}>
           <div className="space-y-2">
             <div className="flex items-center justify-between mb-6">
               {!sidebarCollapsed && (
@@ -927,13 +1440,13 @@ function App() {
               onClick={() => setSidebarView("dashboard")}
               collapsed={sidebarCollapsed}
             />
-            
+
             {mode === "teacher" && (
               <>
                 <div className={!sidebarCollapsed ? "mt-6 mb-3" : "hidden"}>
                   <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Content Creation</h4>
                 </div>
-                
+
                 <NavItem
                   icon={BookOpen}
                   label="Generate MCQs"
@@ -961,21 +1474,21 @@ function App() {
                   <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Student Management</h4>
                 </div>
 
-                <NavItem
+                {/* <NavItem
                   icon={UserCheck}
                   label="Attendance"
                   active={sidebarView === "attendance"}
                   onClick={() => setSidebarView("attendance")}
                   collapsed={sidebarCollapsed}
-                />
-                <NavItem
+                /> */}
+                {/* <NavItem
                   icon={ClipboardCheck}
                   label="Student Evaluation"
                   active={sidebarView === "evaluation"}
                   onClick={() => setSidebarView("evaluation")}
                   collapsed={sidebarCollapsed}
                   badge="New"
-                />
+                /> */}
                 <NavItem
                   icon={Target}
                   label="Learning Paths"
@@ -990,20 +1503,28 @@ function App() {
                   onClick={() => setSidebarView("progress")}
                   collapsed={sidebarCollapsed}
                 />
-                <NavItem
+                {/* <NavItem
                   icon={Lightbulb}
                   label="Find Resources"
                   active={sidebarView === "resources"}
                   onClick={() => setSidebarView("resources")}
                   collapsed={sidebarCollapsed}
+                /> */}
+                <NavItem
+                  icon={Folder}
+                  label="My Visualizations"
+                  active={sidebarView === "saved_visualizations"}
+                  onClick={() => setSidebarView("saved_visualizations")}
+                  collapsed={sidebarCollapsed}
+                  badge={InMemoryDB.getVisualizationsByTeacher(userId).length.toString()}
                 />
               </>
             )}
-            
+
             <div className={!sidebarCollapsed ? "mt-6 mb-3" : "hidden"}>
               <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Support</h4>
             </div>
-            
+
             <NavItem
               icon={MessageCircle}
               label="AI Assistant"
@@ -1049,7 +1570,7 @@ function App() {
                     {mode === "teacher" ? "Teacher Dashboard" : "Student Dashboard"}
                   </h2>
                   <p className="text-gray-600 mt-1">
-                    {mode === "teacher" 
+                    {mode === "teacher"
                       ? "Comprehensive educational management with AI-powered tools"
                       : "Access shared content and learning materials"
                     }
@@ -1185,6 +1706,114 @@ function App() {
             </div>
           )}
 
+          {/* Saved Visualizations View */}
+          {sidebarView === "saved_visualizations" && mode === "teacher" && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                  <Folder className="text-green-600" size={24} />
+                </div>
+                <div>
+                  <h2 className="text-3xl font-bold text-gray-900">My Visualizations</h2>
+                  <p className="text-gray-600">Manage and share your saved visualizations</p>
+                </div>
+              </div>
+
+              {/* Visualization Stats */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <StatsCard
+                  title="Total Created"
+                  value={InMemoryDB.getVisualizationsByTeacher(userId).length}
+                  icon={Layers}
+                  color="green"
+                />
+                <StatsCard
+                  title="Shared"
+                  value={InMemoryDB.getVisualizationsByTeacher(userId).filter(v => v.shared).length}
+                  icon={Share}
+                  color="blue"
+                />
+                <StatsCard
+                  title="Total Views"
+                  value={InMemoryDB.getVisualizationsByTeacher(userId).reduce((sum, v) => sum + (v.views || 0), 0)}
+                  icon={Eye}
+                  color="purple"
+                />
+                <StatsCard
+                  title="This Week"
+                  value={InMemoryDB.getVisualizationsByTeacher(userId).filter(v =>
+                    new Date() - new Date(v.createdAt) < 7 * 24 * 60 * 60 * 1000
+                  ).length}
+                  icon={Calendar}
+                  color="orange"
+                />
+              </div>
+
+              {/* Visualizations Grid */}
+              <Card>
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl font-bold text-gray-900">Your Visualizations</h3>
+                  <div className="flex gap-3">
+                    <Button
+                      onClick={() => setSidebarView("visualize")}
+                      variant="primary"
+                      size="sm"
+                      icon={Plus}
+                    >
+                      Create New
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        const unsharedViz = InMemoryDB.getVisualizationsByTeacher(userId).filter(v => !v.shared);
+                        if (unsharedViz.length === 0) {
+                          alert("No unshared visualizations found.");
+                          return;
+                        }
+                        if (window.confirm(`Share all ${unsharedViz.length} unshared visualizations with students?`)) {
+                          let sharedCount = 0;
+                          unsharedViz.forEach(viz => {
+                            if (InMemoryDB.shareContent(viz.id)) sharedCount++;
+                          });
+                          setSavedContent(InMemoryDB.getContent(userId));
+                          setSharedContent(InMemoryDB.getSharedContent());
+                          alert(`${sharedCount} visualizations shared with students!`);
+                        }
+                      }}
+                      variant="success"
+                      size="sm"
+                      icon={Share}
+                    >
+                      Share All
+                    </Button>
+                  </div>
+                </div>
+
+                {InMemoryDB.getVisualizationsByTeacher(userId).length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Brain size={32} className="text-gray-400" />
+                    </div>
+                    <h4 className="text-lg font-medium text-gray-900 mb-2">No visualizations yet</h4>
+                    <p className="text-gray-600 mb-6">Create your first visualization to get started</p>
+                    <Button
+                      onClick={() => setSidebarView("visualize")}
+                      variant="primary"
+                      icon={Plus}
+                    >
+                      Create Visualization
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {InMemoryDB.getVisualizationsByTeacher(userId).map(content => (
+                      <ContentCard key={content.id} content={content} />
+                    ))}
+                  </div>
+                )}
+              </Card>
+            </div>
+          )}
+
           {/* Attendance Management View */}
           {sidebarView === "attendance" && mode === "teacher" && (
             <div className="space-y-6">
@@ -1215,7 +1844,7 @@ function App() {
                         className="w-full p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
                       />
                     </div>
-                    
+
                     <div>
                       <label className="block text-sm font-semibold text-gray-900 mb-2">
                         Date
@@ -1227,7 +1856,7 @@ function App() {
                         className="w-full p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
                       />
                     </div>
-                    
+
                     <div>
                       <label className="block text-sm font-semibold text-gray-900 mb-2">
                         Status
@@ -1243,7 +1872,7 @@ function App() {
                         <option value="excused">Excused</option>
                       </select>
                     </div>
-                    
+
                     <div>
                       <label className="block text-sm font-semibold text-gray-900 mb-2">
                         Subject
@@ -1256,7 +1885,7 @@ function App() {
                         className="w-full p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
                       />
                     </div>
-                    
+
                     <Button
                       onClick={saveAttendance}
                       disabled={loading}
@@ -1340,7 +1969,7 @@ function App() {
                         disabled={currentEvaluation !== null}
                       />
                     </div>
-                    
+
                     <Button
                       onClick={startStudentEvaluation}
                       disabled={loading || !evaluationStudent.trim() || currentEvaluation !== null}
@@ -1352,7 +1981,7 @@ function App() {
                     >
                       {loading ? "Starting Evaluation..." : "Start Comprehensive Evaluation"}
                     </Button>
-                    
+
                     <div className="text-sm text-gray-600 bg-blue-50 p-4 rounded-lg">
                       <div className="flex items-start gap-2">
                         <AlertCircle size={16} className="text-blue-600 mt-0.5" />
@@ -1377,20 +2006,20 @@ function App() {
                       <h3 className="text-xl font-bold text-gray-900">Active Evaluation</h3>
                       <Badge variant="red">In Progress</Badge>
                     </div>
-                    
+
                     <div className="mb-4">
                       <div className="flex justify-between text-sm text-gray-600 mb-2">
                         <span>Progress</span>
                         <span>{currentEvaluation.progress_percentage?.toFixed(1) || 0}%</span>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div 
-                          className="bg-red-600 h-2 rounded-full transition-all duration-300" 
+                        <div
+                          className="bg-red-600 h-2 rounded-full transition-all duration-300"
                           style={{ width: `${currentEvaluation.progress_percentage || 0}%` }}
                         ></div>
                       </div>
                     </div>
-                    
+
                     {currentEvaluation.next_question ? (
                       <div className="space-y-4">
                         <div className="bg-red-50 p-4 rounded-lg border border-red-100">
@@ -1399,14 +2028,14 @@ function App() {
                           </div>
                           <p className="text-gray-800">{currentEvaluation.next_question.question}</p>
                         </div>
-                        
+
                         <textarea
                           value={evaluationAnswer}
                           onChange={(e) => setEvaluationAnswer(e.target.value)}
                           placeholder="Enter the student's answer..."
                           className="w-full h-24 p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
                         />
-                        
+
                         <Button
                           onClick={submitEvaluationAnswer}
                           disabled={loading || !evaluationAnswer.trim()}
@@ -1490,7 +2119,7 @@ function App() {
 
               <Card className="space-y-6">
                 <h3 className="text-xl font-bold text-gray-900">Create Learning Path</h3>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <label className="block text-sm font-semibold text-gray-900 mb-2">
@@ -1504,7 +2133,7 @@ function App() {
                       className="w-full p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
                     />
                   </div>
-                  
+
                   <div>
                     <label className="block text-sm font-semibold text-gray-900 mb-2">
                       Subject/Topic
@@ -1517,7 +2146,7 @@ function App() {
                       className="w-full p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
                     />
                   </div>
-                  
+
                   <div>
                     <label className="block text-sm font-semibold text-gray-900 mb-2">
                       Duration (Optional)
@@ -1543,7 +2172,7 @@ function App() {
                     <div>
                       <strong className="text-purple-800">AI-Powered Personalization:</strong>
                       <p className="text-sm text-purple-700 mt-1">
-                        Learning paths are automatically customized based on student evaluation data, 
+                        Learning paths are automatically customized based on student evaluation data,
                         learning styles, and psychological profiles for maximum effectiveness.
                       </p>
                     </div>
@@ -1591,7 +2220,7 @@ function App() {
 
               <Card className="space-y-6">
                 <h3 className="text-xl font-bold text-gray-900">Analyze Student Progress</h3>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <label className="block text-sm font-semibold text-gray-900 mb-2">
@@ -1618,7 +2247,7 @@ function App() {
                     <div>
                       <strong className="text-yellow-800">Multi-Source Analysis:</strong>
                       <p className="text-sm text-yellow-700 mt-1">
-                        Combines data from attendance records, MCQ performance, game engagement, 
+                        Combines data from attendance records, MCQ performance, game engagement,
                         learning paths, and evaluation results for comprehensive insights.
                       </p>
                     </div>
@@ -1666,7 +2295,7 @@ function App() {
 
               <Card className="space-y-6">
                 <h3 className="text-xl font-bold text-gray-900">Find Educational Resources</h3>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <label className="block text-sm font-semibold text-gray-900 mb-2">
@@ -1680,7 +2309,7 @@ function App() {
                       className="w-full p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
-                  
+
                   <div>
                     <label className="block text-sm font-semibold text-gray-900 mb-2">
                       Grade Level (Optional)
@@ -1705,7 +2334,7 @@ function App() {
                     <div>
                       <strong className="text-blue-800">Web-Based Discovery:</strong>
                       <p className="text-sm text-blue-700 mt-1">
-                        Searches across YouTube, Khan Academy, Coursera, academic papers, and interactive 
+                        Searches across YouTube, Khan Academy, Coursera, academic papers, and interactive
                         simulations to find the best educational materials.
                       </p>
                     </div>
@@ -1786,7 +2415,7 @@ function App() {
                   >
                     {loading ? "Generating MCQs..." : "Generate MCQs"}
                   </Button>
-                  
+
                   {response && (
                     <Button
                       onClick={() => saveContent("mcq")}
@@ -1799,11 +2428,133 @@ function App() {
                   )}
                 </div>
               </Card>
+              Display MCQ Questions
+              Display MCQ Questions for Teachers
+              {mcqData && (
+                <Card>
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900">Generated MCQ Questions</h3>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Topic: {mcqData.metadata?.topic} • {mcqData.questions?.length} Questions • {mcqData.metadata?.difficulty} Difficulty
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" icon={Copy}>
+                        Copy All
+                      </Button>
+                      <Button variant="outline" size="sm" icon={Download}>
+                        Export PDF
+                      </Button>
+                      <Button variant="outline" size="sm" icon={Share}>
+                        Share with Students
+                      </Button>
+                    </div>
+                  </div>
 
-              {response && (
+                  <div className="space-y-6">
+                    {mcqData.questions?.map((question, index) => (
+                      <div key={question.id} className="p-6 rounded-xl border border-gray-200 bg-white hover:shadow-sm transition-all">
+                        <div className="flex items-start gap-4">
+                          <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold">
+                            {index + 1}
+                          </div>
+                          <div className="flex-1">
+                            {/* Question */}
+                            <h4 className="text-lg font-medium text-gray-900 mb-4 leading-relaxed">
+                              {question.question}
+                            </h4>
+
+                            {/* Options */}
+                            <div className="grid grid-cols-1 gap-3 mb-4">
+                              {Object.entries(question.options).map(([option, text]) => {
+                                const isCorrect = question.correct_answer === option;
+
+                                return (
+                                  <div
+                                    key={option}
+                                    className={`p-4 rounded-lg border-2 ${isCorrect
+                                      ? 'border-green-500 bg-green-50'
+                                      : 'border-gray-300 bg-gray-50'
+                                      }`}
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <span className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold ${isCorrect
+                                        ? 'border-green-500 bg-green-500 text-white'
+                                        : 'border-gray-400 bg-white text-gray-600'
+                                        }`}>
+                                        {option}
+                                      </span>
+                                      <span className="flex-1 text-gray-800">{text}</span>
+                                      {isCorrect && (
+                                        <div className="flex items-center gap-2">
+                                          <CheckCircle size={20} className="text-green-600" />
+                                          <Badge variant="green" size="sm">Correct Answer</Badge>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Answer Explanation */}
+                            <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                              <div className="flex items-start gap-2">
+                                <Lightbulb size={16} className="text-blue-600 mt-0.5" />
+                                <div>
+                                  <strong className="text-blue-800">Explanation:</strong>
+                                  <p className="text-sm text-blue-700 mt-1">{question.explanation}</p>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Question Metadata */}
+                            <div className="flex items-center gap-4 mt-4 text-xs">
+                              <Badge variant="blue" size="sm">
+                                {question.difficulty || 'Medium'}
+                              </Badge>
+                              <Badge variant="purple" size="sm">
+                                {question.question_type?.replace('_', ' ') || 'General'}
+                              </Badge>
+                              <Badge variant="green" size="sm">
+                                Answer: {question.correct_answer}
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Summary Footer */}
+                  <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl border border-blue-200">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-semibold text-gray-900">Question Set Summary</h4>
+                        <p className="text-sm text-gray-600 mt-1">
+                          {mcqData.questions?.length} questions ready for distribution •
+                          Generated on {new Date().toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="primary" size="sm" icon={Share}>
+                          Share with Class
+                        </Button>
+                        <Button variant="outline" size="sm" icon={Settings}>
+                          Modify Questions
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              )}
+
+              {/* Fallback response display */}
+              {response && !mcqData && (
                 <Card>
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-xl font-bold text-gray-900">Generated MCQs</h3>
+                    <h3 className="text-xl font-bold text-gray-900">Response</h3>
                     <div className="flex gap-2">
                       <Button variant="outline" size="sm" icon={Copy}>
                         Copy
@@ -1862,7 +2613,7 @@ function App() {
                   >
                     {loading ? "Creating..." : "Create Visualization"}
                   </Button>
-                  
+
                   {htmlContent && (
                     <Button
                       onClick={() => saveContent("visualization")}
@@ -1881,23 +2632,98 @@ function App() {
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-xl font-bold text-gray-900">Generated Visualization</h3>
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" icon={Maximize2}>
-                        Fullscreen
+                      <Button
+                        onClick={toggleFullscreen}
+                        variant="outline"
+                        size="sm"
+                        icon={isFullscreen ? Minimize2 : Maximize2}
+                      >
+                        {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
                       </Button>
-                      <Button variant="outline" size="sm" icon={Download}>
-                        Download
+                      <Button
+                        onClick={() => {
+                          const blob = new Blob([htmlContent], { type: 'text/html' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = 'visualization.html';
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                        }}
+                        variant="outline"
+                        size="sm"
+                        icon={Download}
+                      >
+                        Download HTML
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          navigator.clipboard.writeText(htmlContent);
+                          setNotifications(prev => [...prev, {
+                            id: Date.now(),
+                            message: "HTML code copied to clipboard!",
+                            time: "Just now",
+                            unread: true
+                          }]);
+                        }}
+                        variant="outline"
+                        size="sm"
+                        icon={Copy}
+                      >
+                        Copy Code
                       </Button>
                     </div>
                   </div>
                   <div className="relative overflow-hidden rounded-xl border border-gray-200">
                     <iframe
+                      id="visualization-iframe"
                       title="Visualization Preview"
                       srcDoc={htmlContent}
-                      className="w-full h-96 bg-white"
+                      className={`w-full bg-white transition-all duration-300 ${isFullscreen
+                        ? 'fixed inset-0 z-50 h-screen'
+                        : 'h-96'
+                        }`}
+                      style={{
+                        ...(isFullscreen && {
+                          position: 'fixed',
+                          top: 0,
+                          left: 0,
+                          width: '100vw',
+                          height: '100vh',
+                          zIndex: 9999,
+                          border: 'none',
+                          borderRadius: 0
+                        })
+                      }}
                     />
+                    {isFullscreen && (
+                      <div className="fixed top-4 right-4 z-[10000]">
+                        <Button
+                          onClick={toggleFullscreen}
+                          variant="secondary"
+                          size="sm"
+                          icon={X}
+                          className="bg-white/90 backdrop-blur-sm hover:bg-white shadow-lg"
+                        >
+                          Exit Fullscreen
+                        </Button>
+                      </div>
+                    )}
                   </div>
+                  {!isFullscreen && (
+                    <div className="mt-4 p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-100">
+                      <div className="flex items-center gap-2 text-sm text-green-700">
+                        <Eye size={16} />
+                        <span>Click fullscreen button above for better viewing experience</span>
+                      </div>
+                    </div>
+                  )}
                 </Card>
               )}
+
+
 
               {response && !htmlContent && (
                 <Card>
@@ -1951,11 +2777,11 @@ function App() {
                   >
                     {loading ? "Creating Game..." : "Create Game"}
                   </Button>
-                  
+
                   {htmlContent && (
                     <Button
-                      onClick={() => saveContent("game")}
-                      variant="success"
+                      onClick={() => saveContent("visualization")}
+                      variant="primary"
                       size="lg"
                       icon={Save}
                     >
@@ -1964,27 +2790,99 @@ function App() {
                   )}
                 </div>
               </Card>
-
               {htmlContent && (
                 <Card>
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-xl font-bold text-gray-900">Generated Game</h3>
+                    <h3 className="text-xl font-bold text-gray-900">Generated Visualization</h3>
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" icon={Maximize2}>
-                        Fullscreen
+                      <Button
+                        onClick={toggleFullscreen}
+                        variant="outline"
+                        size="sm"
+                        icon={isFullscreen ? Minimize2 : Maximize2}
+                      >
+                        {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
                       </Button>
-                      <Button variant="outline" size="sm" icon={Share}>
-                        Share Game
+                      <Button
+                        onClick={() => {
+                          const blob = new Blob([htmlContent], { type: 'text/html' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = 'visualization.html';
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                        }}
+                        variant="outline"
+                        size="sm"
+                        icon={Download}
+                      >
+                        Download HTML
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          navigator.clipboard.writeText(htmlContent);
+                          setNotifications(prev => [...prev, {
+                            id: Date.now(),
+                            message: "HTML code copied to clipboard!",
+                            time: "Just now",
+                            unread: true
+                          }]);
+                        }}
+                        variant="outline"
+                        size="sm"
+                        icon={Copy}
+                      >
+                        Copy Code
                       </Button>
                     </div>
                   </div>
                   <div className="relative overflow-hidden rounded-xl border border-gray-200">
                     <iframe
-                      title="Game Preview"
+                      id="visualization-iframe"
+                      title="Visualization Preview"
                       srcDoc={htmlContent}
-                      className="w-full h-96 bg-white"
+                      className={`w-full bg-white transition-all duration-300 ${isFullscreen
+                        ? 'fixed inset-0 z-50 h-screen'
+                        : 'h-96'
+                        }`}
+                      style={{
+                        ...(isFullscreen && {
+                          position: 'fixed',
+                          top: 0,
+                          left: 0,
+                          width: '100vw',
+                          height: '100vh',
+                          zIndex: 9999,
+                          border: 'none',
+                          borderRadius: 0
+                        })
+                      }}
                     />
+                    {isFullscreen && (
+                      <div className="fixed top-4 right-4 z-[10000]">
+                        <Button
+                          onClick={toggleFullscreen}
+                          variant="secondary"
+                          size="sm"
+                          icon={X}
+                          className="bg-white/90 backdrop-blur-sm hover:bg-white shadow-lg"
+                        >
+                          Exit Fullscreen
+                        </Button>
+                      </div>
+                    )}
                   </div>
+                  {!isFullscreen && (
+                    <div className="mt-4 p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-100">
+                      <div className="flex items-center gap-2 text-sm text-green-700">
+                        <Eye size={16} />
+                        <span>Click fullscreen button above for better viewing experience</span>
+                      </div>
+                    </div>
+                  )}
                 </Card>
               )}
 
@@ -2004,13 +2902,38 @@ function App() {
           {/* Enhanced Chat View */}
           {sidebarView === "chat" && (
             <div className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-xl flex items-center justify-center">
-                  <MessageCircle className="text-white" size={24} />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-xl flex items-center justify-center">
+                    <MessageCircle className="text-white" size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-bold text-gray-900">AI Assistant</h2>
+                    <p className="text-gray-600">Get instant help and answers to your questions</p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-3xl font-bold text-gray-900">AI Assistant</h2>
-                  <p className="text-gray-600">Get instant help and answers to your questions</p>
+
+                {/* Connection Status & Model Toggle */}
+                <div className="flex items-center gap-3">
+                  {/* Connection Status */}
+                  <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${isOnline ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                    }`}>
+                    <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'
+                      }`}></div>
+                    <span className="text-sm font-medium">
+                      {isOnline ? 'Online' : 'Offline'}
+                    </span>
+                  </div>
+
+                  {/* Model Toggle */}
+                  <Button
+                    onClick={() => setUseLocalModel(!useLocalModel)}
+                    variant={useLocalModel ? "success" : "outline"}
+                    size="sm"
+                    icon={useLocalModel ? Shield : Globe}
+                  >
+                    {useLocalModel ? 'Local AI' : 'Cloud AI'}
+                  </Button>
                 </div>
               </div>
 
@@ -2037,28 +2960,37 @@ function App() {
                     <>
                       {chat.map(message => (
                         <div key={message.id} className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}>
-                          <div className={`max-w-xs lg:max-w-md ${
-                            message.sender === "user" 
-                              ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white" 
-                              : "bg-gray-50 text-gray-800 border border-gray-200"
-                          } rounded-2xl px-6 py-4 shadow-sm`}>
+                          <div className={`max-w-xs lg:max-w-md ${message.sender === "user"
+                            ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white"
+                            : "bg-gray-50 text-gray-800 border border-gray-200"
+                            } rounded-2xl px-6 py-4 shadow-sm`}>
                             {message.image && (
-                              <img 
-                                src={message.image} 
-                                alt="Uploaded" 
-                                className="max-w-full h-32 object-cover rounded-lg mb-3 border" 
+                              <img
+                                src={message.image}
+                                alt="Uploaded"
+                                className="max-w-full h-32 object-cover rounded-lg mb-3 border"
                               />
                             )}
                             <p className="text-sm leading-relaxed">{message.text}</p>
-                            <p className={`text-xs mt-2 ${
-                              message.sender === "user" ? "text-blue-100" : "text-gray-500"
-                            }`}>
-                              {message.timestamp}
-                            </p>
+                            <div className="flex items-center justify-between mt-2">
+                              <p className={`text-xs ${message.sender === "user" ? "text-blue-100" : "text-gray-500"}`}>
+                                {message.timestamp}
+                              </p>
+                              {message.sender === "bot" && message.modelUsed && (
+                                <Badge
+                                  variant={message.modelUsed === "local" ? "green" : "blue"}
+                                  size="sm"
+                                  className="ml-2"
+                                >
+                                  {message.modelUsed === "local" ? "Local AI" :
+                                    message.modelUsed === "cloud (fallback)" ? "Cloud (FB)" : "Cloud"}
+                                </Badge>
+                              )}
+                            </div>
                           </div>
                         </div>
                       ))}
-                      
+
                       {isTyping && (
                         <div className="flex justify-start">
                           <div className="bg-gray-50 border border-gray-200 rounded-2xl px-6 py-4 shadow-sm">
@@ -2177,11 +3109,10 @@ function NavItem({ icon: Icon, label, active, onClick, collapsed, badge }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all duration-200 group ${
-        active 
-          ? 'bg-gradient-to-r from-blue-50 to-purple-50 text-blue-700 border-l-4 border-blue-500 shadow-sm' 
-          : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
-      }`}
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all duration-200 group ${active
+        ? 'bg-gradient-to-r from-blue-50 to-purple-50 text-blue-700 border-l-4 border-blue-500 shadow-sm'
+        : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+        }`}
     >
       <Icon size={20} className={active ? 'text-blue-600' : 'text-gray-500 group-hover:text-gray-700'} />
       {!collapsed && (

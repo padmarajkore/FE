@@ -13,6 +13,18 @@
   }
 }
 
+ /* 7. Add this CSS for the connection status indicator (you can add this to your existing styles or create a separate CSS file) */
+/* Add this to your CSS if you want a pulsing animation for the connection status */
+.connection-pulse {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
 .App-header {
   background-color: #282c34;
   min-height: 100vh;
